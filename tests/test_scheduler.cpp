@@ -1,8 +1,37 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <iostream>
 #include <thread>
+#include <vector>
 
+#include "NanoLogCpp17.h"
 #include "scheduler.h"
+
+namespace {
+void init_nano_log() {
+    const std::vector<std::string> candidates = {
+        "/tmp/taskscheduler.log",
+        "./taskscheduler.log",
+        "/dev/null",
+    };
+    for (const auto &path : candidates) {
+        try {
+            NanoLog::setLogFile(path.c_str());
+            NanoLog::setLogLevel(NanoLog::LogLevels::NOTICE);
+            NanoLog::preallocate();
+            return;
+        } catch (const std::exception &e) {
+            std::cerr << "NanoLog setLogFile failed for " << path << ": " << e.what() << "\n";
+        }
+    }
+    std::cerr << "NanoLog initialization failed; continuing without logging\n";
+}
+
+struct NanoLogInit {
+    NanoLogInit() { init_nano_log(); }
+};
+const NanoLogInit nanolog_init;
+} // namespace
 
 using namespace std::chrono_literals;
 

@@ -39,13 +39,30 @@ void print_stack(const char *ctx) {
     (void)ctx;
 #endif
 }
+
+void init_nano_log() {
+    const std::vector<std::string> candidates = {
+        "/tmp/taskscheduler.log",
+        "./taskscheduler.log",
+        "/dev/null",
+    };
+    for (const auto &path : candidates) {
+        try {
+            NanoLog::setLogFile(path.c_str());
+            NanoLog::setLogLevel(NanoLog::LogLevels::NOTICE);
+            NanoLog::preallocate();
+            return;
+        } catch (const std::exception &e) {
+            std::cerr << "NanoLog setLogFile failed for " << path << ": " << e.what() << "\n";
+        }
+    }
+    std::cerr << "NanoLog initialization failed; continuing without logging\n";
+}
 }
 
 int main(int argc, char **argv) {
     try {
-        NanoLog::setLogFile("/tmp/taskscheduler.log");
-        NanoLog::setLogLevel(NanoLog::LogLevels::NOTICE);
-        NanoLog::preallocate();
+        init_nano_log();
 
         SchedulerOptions opts;
         JobSpec spec;
