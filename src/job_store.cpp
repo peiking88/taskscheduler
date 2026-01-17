@@ -1,5 +1,6 @@
 #include "job_store.h"
-#include "logger.h"
+
+#include "NanoLogCpp17.h"
 
 #ifdef TASKSCHEDULER_ENABLE_SQLITE
 #include <sqlite3.h>
@@ -7,6 +8,7 @@
 
 #include <chrono>
 
+using namespace NanoLog::LogLevels;
 namespace {
 const char *persist_status_str(PersistStatus s) {
     switch (s) {
@@ -26,7 +28,7 @@ bool JobStore::init(const std::string &path) {
 #ifdef TASKSCHEDULER_ENABLE_SQLITE
     sqlite3 *db = nullptr;
     if (sqlite3_open(path_.c_str(), &db) != SQLITE_OK) {
-        Logger::instance().log(Logger::Level::Error, "Failed to open sqlite db");
+        NANO_LOG(ERROR, "%s", "Failed to open sqlite db");
         return false;
     }
     const char *ddl = R"(
@@ -46,7 +48,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 )";
     char *errmsg = nullptr;
     if (sqlite3_exec(db, ddl, nullptr, nullptr, &errmsg) != SQLITE_OK) {
-        Logger::instance().log(Logger::Level::Error, std::string("Failed to create table: ") + (errmsg ? errmsg : ""));
+        auto msg = std::string("Failed to create table: ") + (errmsg ? errmsg : "");
+        NANO_LOG(ERROR, "%s", msg.c_str());
         sqlite3_free(errmsg);
         sqlite3_close(db);
         return false;
@@ -54,7 +57,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     sqlite3_close(db);
     return true;
 #else
-    Logger::instance().log(Logger::Level::Info, "Persistence disabled; init is a no-op");
+    NANO_LOG(NOTICE, "%s", "Persistence disabled; init is a no-op");
     (void)path;
     return true;
 #endif

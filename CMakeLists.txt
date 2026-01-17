@@ -52,7 +52,6 @@ else()
 endif()
 
 file(GLOB TASKSCHEDULER_SOURCES CONFIGURE_DEPENDS
-  src/logger.cpp
   src/resource_manager.cpp
   src/cgroup_helper.cpp
   src/metrics.cpp
@@ -63,13 +62,32 @@ file(GLOB TASKSCHEDULER_SOURCES CONFIGURE_DEPENDS
   src/backward.cpp
 )
 
+# NanoLog (from external/NanoLog)
+set(NANOLOG_SRC
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/NanoLog.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/RuntimeLogger.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/Log.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/LogDecompressor.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/Cycles.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/Perf.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/PerfHelper.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/TimeTrace.cc
+  ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime/Util.cc
+  ${PROJECT_SOURCE_DIR}/src/nanolog_generated_stubs.cpp
+)
+add_library(nanolog STATIC ${NANOLOG_SRC})
+target_include_directories(nanolog PUBLIC ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime)
+target_compile_options(nanolog PRIVATE -UPREPROCESSOR_NANOLOG)
+
 add_library(taskscheduler ${TASKSCHEDULER_SOURCES})
 target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime)
 if(ENABLE_BACKWARD AND EXISTS ${PROJECT_SOURCE_DIR}/external/backward-cpp)
   target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/external/backward-cpp)
 endif()
-target_link_libraries(taskscheduler PRIVATE ${TASKSCHEDULER_SQLITE_LIB} pthread ${TASKSCHEDULER_BACKWARD_LIB})
+target_link_libraries(taskscheduler PRIVATE nanolog ${TASKSCHEDULER_SQLITE_LIB} pthread ${TASKSCHEDULER_BACKWARD_LIB})
 
+target_compile_options(taskscheduler PRIVATE -UPREPROCESSOR_NANOLOG)
 target_compile_definitions(taskscheduler PRIVATE _GNU_SOURCE)
 
 add_executable(scheduler src/main.cpp)

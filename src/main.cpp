@@ -9,6 +9,8 @@
 #include <thread>
 #include <vector>
 
+#include "NanoLogCpp17.h"
+
 #ifndef BACKWARD_DISABLE
 #include <backward.hpp>
 #endif
@@ -41,6 +43,10 @@ void print_stack(const char *ctx) {
 
 int main(int argc, char **argv) {
     try {
+        NanoLog::setLogFile("/tmp/taskscheduler.log");
+        NanoLog::setLogLevel(NanoLog::LogLevels::NOTICE);
+        NanoLog::preallocate();
+
         SchedulerOptions opts;
         JobSpec spec;
         bool has_cmd = false;

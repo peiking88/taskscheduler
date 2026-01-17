@@ -1,6 +1,6 @@
 #include "metrics_http_server.h"
 
-#include "logger.h"
+#include "NanoLogCpp17.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -8,6 +8,8 @@
 #include <unistd.h>
 
 #include <cstring>
+
+using namespace NanoLog::LogLevels;
 
 namespace {
 std::string build_response(const std::string &body, const std::string &content_type = "text/plain") {
@@ -27,7 +29,7 @@ bool MetricsHttpServer::start(int port, MetricsHandler handler) {
 
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
-        Logger::instance().log(Logger::Level::Error, "Failed to create socket");
+        NANO_LOG(ERROR, "%s", "Failed to create socket");
         running_ = false;
         return false;
     }
@@ -41,13 +43,14 @@ bool MetricsHttpServer::start(int port, MetricsHandler handler) {
     addr.sin_port = htons(static_cast<uint16_t>(port));
 
     if (bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-        Logger::instance().log(Logger::Level::Error, "Failed to bind port " + std::to_string(port));
+        auto msg = std::string("Failed to bind port ") + std::to_string(port);
+        NANO_LOG(ERROR, "%s", msg.c_str());
         ::close(listen_fd_);
         running_ = false;
         return false;
     }
     if (listen(listen_fd_, 64) < 0) {
-        Logger::instance().log(Logger::Level::Error, "listen() failed");
+        NANO_LOG(ERROR, "%s", "listen() failed");
         ::close(listen_fd_);
         running_ = false;
         return false;
@@ -59,7 +62,7 @@ bool MetricsHttpServer::start(int port, MetricsHandler handler) {
     for (unsigned i = 0; i < worker_count; ++i) {
         workers_.emplace_back(&MetricsHttpServer::worker_loop, this);
     }
-    Logger::instance().log(Logger::Level::Info, "Metrics HTTP server started on port " + std::to_string(port));
+    NANO_LOG(NOTICE, "Metrics HTTP server started on port %d", port);
     return true;
 }
 
@@ -76,7 +79,7 @@ void MetricsHttpServer::stop() {
         if (t.joinable()) t.join();
     }
     workers_.clear();
-    Logger::instance().log(Logger::Level::Info, "Metrics HTTP server stopped");
+    NANO_LOG(NOTICE, "%s", "Metrics HTTP server stopped");
 }
 
 void MetricsHttpServer::accept_loop(int /*port*/) {

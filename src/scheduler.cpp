@@ -11,10 +11,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "NanoLogCpp17.h"
+
 #ifndef BACKWARD_DISABLE
 #include <backward.hpp>
 #endif
 
+using namespace NanoLog::LogLevels;
 namespace {
 void print_stack(const char *ctx) {
 #ifndef BACKWARD_DISABLE
@@ -23,10 +26,10 @@ void print_stack(const char *ctx) {
     backward::Printer p;
     p.object = true;
     p.color_mode = backward::ColorMode::automatic;
-    Logger::instance().log(Logger::Level::Error, std::string("[STACK] ") + ctx);
+    NANO_LOG(ERROR, "[STACK] %s", ctx);
     std::ostringstream oss;
     p.print(st, oss);
-    Logger::instance().log(Logger::Level::Error, oss.str());
+    NANO_LOG(ERROR, "%s", oss.str().c_str());
 #else
     (void)ctx;
 #endif
@@ -37,10 +40,12 @@ void run_guarded(const char *ctx, Fn &&fn) {
     try {
         fn();
     } catch (const std::exception &e) {
-        Logger::instance().log(Logger::Level::Error, std::string("Exception in ") + ctx + ": " + e.what());
+        auto msg = std::string("Exception in ") + ctx + ": " + e.what();
+        NANO_LOG(ERROR, "%s", msg.c_str());
         print_stack(ctx);
     } catch (...) {
-        Logger::instance().log(Logger::Level::Error, std::string("Unknown exception in ") + ctx);
+        auto msg = std::string("Unknown exception in ") + ctx;
+        NANO_LOG(ERROR, "%s", msg.c_str());
         print_stack(ctx);
     }
 }
@@ -76,7 +81,7 @@ bool Scheduler::validate_cmd(const std::string &cmd) const {
 int Scheduler::submit(const JobSpec &spec) {
     if (!validate_cmd(spec.cmd)) {
         metrics_.inc_rejected();
-        Logger::instance().log(Logger::Level::Warn, "command rejected by whitelist/blacklist");
+        NANO_LOG(WARNING, "%s", "command rejected by whitelist/blacklist");
         return -1;
     }
 
@@ -163,7 +168,8 @@ bool Scheduler::launch_job(Job &job) {
 
     pid_t pid = ::fork();
     if (pid < 0) {
-        Logger::instance().log(Logger::Level::Error, "fork failed: " + std::string(std::strerror(errno)));
+        auto msg = std::string("fork failed: ") + std::strerror(errno);
+        NANO_LOG(ERROR, "%s", msg.c_str());
         metrics_.inc_launch_failed();
         rm_.release(job.spec.cpu_cores, job.spec.memory_mb);
         return false;
@@ -321,7 +327,7 @@ void Scheduler::psi_loop() {
         if (pressure != psi_backpressure_.load()) {
             psi_backpressure_.store(pressure);
             metrics_.set_pressure_active(pressure);
-            Logger::instance().log(Logger::Level::Info, pressure ? "PSI backpressure activated" : "PSI backpressure cleared");
+            NANO_LOG(NOTICE, "%s", pressure ? "PSI backpressure activated" : "PSI backpressure cleared");
         }
     }
 }

@@ -4,8 +4,8 @@
 #include "cgroup_helper.h"
 #include "job.h"
 #include "job_store.h"
-#include "logger.h"
 #include "metrics.h"
+#include "NanoLogCpp17.h"
 #include "metrics_http_server.h"
 #include "resource_manager.h"
 

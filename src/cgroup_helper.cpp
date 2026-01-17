@@ -1,11 +1,14 @@
 #include "cgroup_helper.h"
-#include "logger.h"
 
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <system_error>
 #include <unistd.h>
+
+#include "NanoLogCpp17.h"
+
+using namespace NanoLog::LogLevels;
 
 namespace fs = std::filesystem;
 
@@ -22,20 +25,21 @@ std::string create_cgroup_for_job(int job_id, int cpu_cores, std::size_t mem_mb,
     std::error_code ec;
     fs::create_directories(cg_dir, ec);
     if (ec) {
-        Logger::instance().log(Logger::Level::Warn, "Failed to create cgroup dir: " + ec.message());
+        auto msg = "Failed to create cgroup dir: " + ec.message();
+        NANO_LOG(WARNING, "%s", msg.c_str());
         return {};
     }
 
     // cpu.max = <quota_us> <period_us>
     long quota = static_cast<long>(cpu_cores * cfg.cpu_period_us);
     if (!write_value(cg_dir / "cpu.max", std::to_string(quota) + " " + std::to_string(cfg.cpu_period_us))) {
-        Logger::instance().log(Logger::Level::Warn, "Failed to write cpu.max");
+        NANO_LOG(WARNING, "%s", "Failed to write cpu.max");
     }
 
     // memory.max in bytes
     std::size_t bytes = mem_mb * 1024ull * 1024ull;
     if (!write_value(cg_dir / "memory.max", std::to_string(bytes))) {
-        Logger::instance().log(Logger::Level::Warn, "Failed to write memory.max");
+        NANO_LOG(WARNING, "%s", "Failed to write memory.max");
     }
 
     return cg_dir.string();
@@ -54,6 +58,7 @@ void cleanup_cgroup(const std::string &cg_path) {
     std::error_code ec;
     std::filesystem::remove_all(cg_path, ec);
     if (ec) {
-        Logger::instance().log(Logger::Level::Warn, "Failed to cleanup cgroup: " + ec.message());
+        auto msg = "Failed to cleanup cgroup: " + ec.message();
+        NANO_LOG(WARNING, "%s", msg.c_str());
     }
 }

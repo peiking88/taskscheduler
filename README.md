@@ -7,7 +7,7 @@ A high-performance single-host task scheduler skeleton. It supports task submiss
 - **Resource quotas**: CPU & memory reservation/release to prevent oversubscription; optional cgroup v2 binding per job.
 - **Scheduling**: priority (larger is higher) or FIFO; optional PSI backpressure (cgroup pressure files).
 - **Isolation & timeout**: fork/exec per job, process-group SIGTERM → grace → SIGKILL two-phase timeout.
-- **Observability**: Prometheus `/metrics`, `/health` endpoint, queue wait stats, backpressure counters.
+- **Observability**: Prometheus `/metrics`, `/health` endpoint, queue wait stats, backpressure counters; NanoLog async file logging (default `/tmp/taskscheduler.log`).
 - **Optional features**:
   - SQLite persistence for unfinished jobs (`ENABLE_PERSISTENCE`)
   - Simplified cron (`@every Ns`)
@@ -29,6 +29,7 @@ git clone <repo-url> taskscheduler
 cd taskscheduler
 git submodule update --init --recursive
 ```
+Submodules: Catch2, backward-cpp, NanoLog.
 
 ## Build configuration
 Key CMake options:
@@ -54,6 +55,11 @@ cmake --build build -j
 - /health: `curl http://localhost:8080/health`
 - /metrics: `curl http://localhost:8080/metrics`
 
+## Logging (NanoLog)
+- Default log file: `/tmp/taskscheduler.log`. You can change it via `NanoLog::setLogFile("<path>")` before starting the scheduler.
+- Use `NANO_LOG(level) << "message";` with levels `DEBUG/INFO/NOTICE/WARN/ERROR/CRIT` (via `using namespace NanoLog::LogLevels`).
+- Preallocates buffers for throughput; ensure the target log directory is writable.
+
 ## Stack traces (backward-cpp)
 With libdw/libbfd/libdwarf present, uncaught exceptions or guarded threads print detailed stack traces. If missing, it falls back to header-only mode with reduced detail.
 
@@ -72,9 +78,9 @@ Current case: submit an `echo` job and wait for completion.
 Current benchmark: `submit trivial echo`; output shows mean/stdev. The repeated “bench” lines are the tested command stdout—switch to `true` or redirect to `/dev/null` for silence.
 
 ## Key layout
-- `src/`: core code (scheduler, resource_manager, metrics, cgroup_helper, cron_scheduler, job_store, logger, backward integration).
+- `src/`: core code (scheduler, resource_manager, metrics, cgroup_helper, cron_scheduler, job_store, NanoLog integration, backward integration). Includes `nanolog_generated_stubs.cpp` for NanoLog's `GeneratedFunctions` symbol.
 - `tests/`: Catch2 unit test and benchmark.
-- `external/`: submodules Catch2 and backward-cpp.
+- `external/`: submodules Catch2, backward-cpp, NanoLog.
 
 ## License
 Apache-2.0

@@ -4,3 +4,6 @@
 [submodule "external/backward-cpp"]
 	path = external/backward-cpp
 	url = https://bgithub.xyz/bombela/backward-cpp
+[submodule "external/NanoLog"]
+	path = external/NanoLog
+	url = https://bgithub.xyz/PlatformLab/NanoLog
