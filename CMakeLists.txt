@@ -6,8 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ENABLE_PERSISTENCE "Enable SQLite job store" ON)
-option(ENABLE_BACKWARD "Enable backward-cpp stack traces" ON)
 option(ENABLE_TESTS "Build tests and benchmarks" ON)
+option(ENABLE_BACKWARD "Enable backward-cpp stack trace backend" ON)
+
+set(TASKSCHEDULER_STACKTRACE_BACKEND "auto" CACHE STRING "Stacktrace backend: auto|stacktrace|backward|none")
+set_property(CACHE TASKSCHEDULER_STACKTRACE_BACKEND PROPERTY STRINGS auto stacktrace backward none)
 
 find_package(SQLite3 QUIET)
 if(ENABLE_PERSISTENCE AND SQLite3_FOUND)
@@ -19,26 +22,100 @@ else()
   set(TASKSCHEDULER_SQLITE_LIB "")
 endif()
 
-set(BACKWARD_ENABLE ON)
-if(ENABLE_BACKWARD AND EXISTS ${CMAKE_SOURCE_DIR}/external/backward-cpp/CMakeLists.txt)
-  add_subdirectory(external/backward-cpp)
-  # Fallback: if heavy dependencies (libbfd/libdw) are missing, force header-only path.
-  add_compile_definitions(BACKWARD_HAS_DW=0 BACKWARD_HAS_BFD=0)
-  if(TARGET backward::backward)
-    set(TASKSCHEDULER_BACKWARD_LIB backward::backward)
-  elseif(TARGET backward)
-    add_library(backward::backward ALIAS backward)
-    set(TASKSCHEDULER_BACKWARD_LIB backward::backward)
-  else()
-    message(WARNING "backward-cpp target not found after add_subdirectory; disabling stack traces")
-    add_compile_definitions(BACKWARD_DISABLE)
-    set(TASKSCHEDULER_BACKWARD_LIB "")
-  endif()
-  message(STATUS "Building with backward-cpp from external/backward-cpp")
+# Stack traces use C++23 <stacktrace> (no backward-cpp dependency)
+# Note: some libstdc++ builds require extra link libs (e.g. libstdc++_libbacktrace)
+# for std::stacktrace; detect it at configure-time.
+include(CheckCXXSourceCompiles)
+
+find_library(TASKSCHEDULER_STDLIB_STACKTRACE_LIB NAMES stdc++_libbacktrace)
+
+set(_TASKSCHEDULER_OLD_REQUIRED_LIBS "${CMAKE_REQUIRED_LIBRARIES}")
+if(TASKSCHEDULER_STDLIB_STACKTRACE_LIB)
+  set(CMAKE_REQUIRED_LIBRARIES "${TASKSCHEDULER_STDLIB_STACKTRACE_LIB}")
 else()
-  message(WARNING "Backward-cpp submodule not found; stack traces will be disabled")
-  add_compile_definitions(BACKWARD_DISABLE)
-  set(TASKSCHEDULER_BACKWARD_LIB "")
+  set(CMAKE_REQUIRED_LIBRARIES "")
+endif()
+
+check_cxx_source_compiles(
+"#include <stacktrace>
+#include <sstream>
+int main() {
+    auto st = std::stacktrace::current();
+    std::ostringstream oss;
+    oss << st;
+    return (int)oss.str().size();
+}"
+TASKSCHEDULER_HAVE_STACKTRACE)
+
+set(CMAKE_REQUIRED_LIBRARIES "${_TASKSCHEDULER_OLD_REQUIRED_LIBS}")
+
+if(TASKSCHEDULER_HAVE_STACKTRACE)
+  add_compile_definitions(TASKSCHEDULER_HAVE_STACKTRACE=1)
+  message(STATUS "C++23 std::stacktrace is available")
+  if(TASKSCHEDULER_STDLIB_STACKTRACE_LIB)
+    set(TASKSCHEDULER_STACKTRACE_LIB "${TASKSCHEDULER_STDLIB_STACKTRACE_LIB}")
+    message(STATUS "Linking stacktrace helper lib: ${TASKSCHEDULER_STACKTRACE_LIB}")
+  else()
+    set(TASKSCHEDULER_STACKTRACE_LIB "")
+  endif()
+else()
+  add_compile_definitions(TASKSCHEDULER_HAVE_STACKTRACE=0)
+  set(TASKSCHEDULER_STACKTRACE_LIB "")
+  message(WARNING "C++23 std::stacktrace not linkable in this toolchain; stack traces will be disabled")
+endif()
+
+# Decide which stacktrace backend to use.
+set(TASKSCHEDULER_USE_STACKTRACE 0)
+set(TASKSCHEDULER_USE_BACKWARD 0)
+
+if(TASKSCHEDULER_STACKTRACE_BACKEND STREQUAL "stacktrace")
+  if(NOT TASKSCHEDULER_HAVE_STACKTRACE)
+    message(FATAL_ERROR "TASKSCHEDULER_STACKTRACE_BACKEND=stacktrace but std::stacktrace is not linkable in this toolchain")
+  endif()
+  set(TASKSCHEDULER_USE_STACKTRACE 1)
+elseif(TASKSCHEDULER_STACKTRACE_BACKEND STREQUAL "backward")
+  if(NOT ENABLE_BACKWARD)
+    message(FATAL_ERROR "TASKSCHEDULER_STACKTRACE_BACKEND=backward but ENABLE_BACKWARD=OFF")
+  endif()
+  set(TASKSCHEDULER_USE_BACKWARD 1)
+elseif(TASKSCHEDULER_STACKTRACE_BACKEND STREQUAL "auto")
+  if(TASKSCHEDULER_HAVE_STACKTRACE)
+    set(TASKSCHEDULER_USE_STACKTRACE 1)
+  else()
+    if(ENABLE_BACKWARD)
+      set(TASKSCHEDULER_USE_BACKWARD 1)
+    else()
+      message(WARNING "No stacktrace backend available (stacktrace not linkable and backward disabled)")
+    endif()
+  endif()
+elseif(TASKSCHEDULER_STACKTRACE_BACKEND STREQUAL "none")
+  # no-op
+else()
+  message(FATAL_ERROR "Unknown TASKSCHEDULER_STACKTRACE_BACKEND='${TASKSCHEDULER_STACKTRACE_BACKEND}'")
+endif()
+
+# Optional: backward-cpp backend
+set(TASKSCHEDULER_BACKWARD_LIB "")
+if(TASKSCHEDULER_USE_BACKWARD)
+  if(EXISTS ${CMAKE_SOURCE_DIR}/external/backward-cpp/CMakeLists.txt)
+    add_subdirectory(external/backward-cpp)
+
+    if(TARGET backward::backward)
+      set(TASKSCHEDULER_BACKWARD_LIB backward::backward)
+    elseif(TARGET backward)
+      add_library(backward::backward ALIAS backward)
+      set(TASKSCHEDULER_BACKWARD_LIB backward::backward)
+    else()
+      message(FATAL_ERROR "backward-cpp target not found after add_subdirectory")
+    endif()
+    message(STATUS "Stacktrace backend: backward-cpp")
+  else()
+    message(FATAL_ERROR "backward-cpp backend requested but external/backward-cpp not found")
+  endif()
+elseif(TASKSCHEDULER_USE_STACKTRACE)
+  message(STATUS "Stacktrace backend: std::stacktrace")
+else()
+  message(STATUS "Stacktrace backend: disabled")
 endif()
 
 if(ENABLE_TESTS AND EXISTS ${CMAKE_SOURCE_DIR}/external/Catch2/CMakeLists.txt)
@@ -82,10 +159,16 @@ target_compile_options(nanolog PRIVATE -UPREPROCESSOR_NANOLOG)
 add_library(taskscheduler ${TASKSCHEDULER_SOURCES})
 target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/external/NanoLog/runtime)
-if(ENABLE_BACKWARD AND EXISTS ${PROJECT_SOURCE_DIR}/external/backward-cpp)
+target_link_libraries(taskscheduler PRIVATE nanolog ${TASKSCHEDULER_SQLITE_LIB} pthread ${TASKSCHEDULER_STACKTRACE_LIB} ${TASKSCHEDULER_BACKWARD_LIB})
+
+target_compile_definitions(taskscheduler PUBLIC
+  TASKSCHEDULER_USE_STACKTRACE=${TASKSCHEDULER_USE_STACKTRACE}
+  TASKSCHEDULER_USE_BACKWARD=${TASKSCHEDULER_USE_BACKWARD}
+)
+
+if(TASKSCHEDULER_USE_BACKWARD)
   target_include_directories(taskscheduler PUBLIC ${PROJECT_SOURCE_DIR}/external/backward-cpp)
 endif()
-target_link_libraries(taskscheduler PRIVATE nanolog ${TASKSCHEDULER_SQLITE_LIB} pthread ${TASKSCHEDULER_BACKWARD_LIB})
 
 target_compile_options(taskscheduler PRIVATE -UPREPROCESSOR_NANOLOG)
 target_compile_definitions(taskscheduler PRIVATE _GNU_SOURCE)

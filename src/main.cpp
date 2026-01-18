@@ -11,7 +11,10 @@
 
 #include "NanoLogCpp17.h"
 
-#ifndef BACKWARD_DISABLE
+#if defined(TASKSCHEDULER_USE_STACKTRACE) && TASKSCHEDULER_USE_STACKTRACE
+#include <stacktrace>
+#endif
+#if defined(TASKSCHEDULER_USE_BACKWARD) && TASKSCHEDULER_USE_BACKWARD
 #include <backward.hpp>
 #endif
 
@@ -27,7 +30,7 @@ std::vector<std::string> split(const std::string &s, char delim) {
 }
 
 void print_stack(const char *ctx) {
-#ifndef BACKWARD_DISABLE
+#if defined(TASKSCHEDULER_USE_BACKWARD) && TASKSCHEDULER_USE_BACKWARD
     backward::StackTrace st;
     st.load_here(64);
     backward::Printer p;
@@ -35,8 +38,11 @@ void print_stack(const char *ctx) {
     p.color_mode = backward::ColorMode::automatic;
     std::cerr << "[STACK] " << ctx << "\n";
     p.print(st, std::cerr);
+#elif defined(TASKSCHEDULER_USE_STACKTRACE) && TASKSCHEDULER_USE_STACKTRACE && defined(TASKSCHEDULER_HAVE_STACKTRACE) && TASKSCHEDULER_HAVE_STACKTRACE
+    std::cerr << "[STACK] " << ctx << "\n";
+    std::cerr << std::stacktrace::current() << "\n";
 #else
-    (void)ctx;
+    std::cerr << "[STACK] " << ctx << " (stacktrace unavailable)\n";
 #endif
 }
 
@@ -54,6 +60,7 @@ void init_nano_log() {
             return;
         } catch (const std::exception &e) {
             std::cerr << "NanoLog setLogFile failed for " << path << ": " << e.what() << "\n";
+            print_stack("init_nano_log");
         }
     }
     std::cerr << "NanoLog initialization failed; continuing without logging\n";
@@ -114,14 +121,17 @@ int main(int argc, char **argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         sched.stop();
+        NanoLog::sync();
         return 0;
     } catch (const std::exception &ex) {
         std::cerr << "Unhandled exception: " << ex.what() << "\n";
         print_stack("main std::exception");
+        NanoLog::sync();
         return 1;
     } catch (...) {
         std::cerr << "Unhandled unknown exception" << "\n";
         print_stack("main unknown exception");
+        NanoLog::sync();
         return 1;
     }
 }

@@ -42,6 +42,7 @@ std::string create_cgroup_for_job(int job_id, int cpu_cores, std::size_t mem_mb,
         NANO_LOG(WARNING, "%s", "Failed to write memory.max");
     }
 
+    NANO_LOG(DEBUG, "cgroup created path=%s quota_us=%ld period_us=%d mem_bytes=%zu", cg_dir.string().c_str(), quota, cfg.cpu_period_us, bytes);
     return cg_dir.string();
 }
 
@@ -50,7 +51,11 @@ bool attach_pid_to_cgroup(pid_t pid, const std::string &cg_path) {
     std::ofstream ofs(std::filesystem::path(cg_path) / "cgroup.procs");
     if (!ofs) return false;
     ofs << pid;
-    return ofs.good();
+    bool ok = ofs.good();
+    if (!ok) {
+        NANO_LOG(WARNING, "attach pid=%d to cgroup=%s failed", pid, cg_path.c_str());
+    }
+    return ok;
 }
 
 void cleanup_cgroup(const std::string &cg_path) {
@@ -60,5 +65,7 @@ void cleanup_cgroup(const std::string &cg_path) {
     if (ec) {
         auto msg = "Failed to cleanup cgroup: " + ec.message();
         NANO_LOG(WARNING, "%s", msg.c_str());
+    } else {
+        NANO_LOG(DEBUG, "cgroup cleaned path=%s", cg_path.c_str());
     }
 }

@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -28,15 +29,17 @@ void init_nano_log() {
     std::cerr << "NanoLog initialization failed; continuing without logging\n";
 }
 
-struct NanoLogInit {
-    NanoLogInit() { init_nano_log(); }
-};
-const NanoLogInit nanolog_init;
+void ensure_nano_log_init() {
+    static std::once_flag once;
+    std::call_once(once, [] { init_nano_log(); });
+}
 } // namespace
 
 using namespace std::chrono_literals;
 
 TEST_CASE("enqueue throughput benchmark") {
+    ensure_nano_log_init();
+
     SchedulerOptions opts;
     opts.quota.total_cpu = 8;
     opts.quota.total_mem_mb = 4096;

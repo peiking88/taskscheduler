@@ -13,14 +13,17 @@
 
 #include "NanoLogCpp17.h"
 
-#ifndef BACKWARD_DISABLE
+#if defined(TASKSCHEDULER_USE_STACKTRACE) && TASKSCHEDULER_USE_STACKTRACE
+#include <stacktrace>
+#endif
+#if defined(TASKSCHEDULER_USE_BACKWARD) && TASKSCHEDULER_USE_BACKWARD
 #include <backward.hpp>
 #endif
 
 using namespace NanoLog::LogLevels;
 namespace {
 void print_stack(const char *ctx) {
-#ifndef BACKWARD_DISABLE
+#if defined(TASKSCHEDULER_USE_BACKWARD) && TASKSCHEDULER_USE_BACKWARD
     backward::StackTrace st;
     st.load_here(64);
     backward::Printer p;
@@ -30,8 +33,14 @@ void print_stack(const char *ctx) {
     std::ostringstream oss;
     p.print(st, oss);
     NANO_LOG(ERROR, "%s", oss.str().c_str());
+#elif defined(TASKSCHEDULER_USE_STACKTRACE) && TASKSCHEDULER_USE_STACKTRACE && defined(TASKSCHEDULER_HAVE_STACKTRACE) && TASKSCHEDULER_HAVE_STACKTRACE
+    NANO_LOG(ERROR, "[STACK] %s", ctx);
+    std::ostringstream oss;
+    oss << std::stacktrace::current();
+    NANO_LOG(ERROR, "%s", oss.str().c_str());
 #else
-    (void)ctx;
+    // 可能原因：工具链 std::stacktrace 链接实现缺失；或显式选择关闭。
+    NANO_LOG(ERROR, "[STACK] %s (stacktrace unavailable)", ctx);
 #endif
 }
 
@@ -88,6 +97,7 @@ int Scheduler::submit(const JobSpec &spec) {
     std::unique_lock lk(mu_);
     if (static_cast<int>(pending_.size()) >= opts_.max_queue_size) {
         metrics_.inc_rejected();
+        NANO_LOG(WARNING, "queue full size=%zu, cmd=%s", pending_.size(), spec.cmd.c_str());
         return -1;
     }
     Job job;
@@ -103,6 +113,8 @@ int Scheduler::submit(const JobSpec &spec) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         store_->insert_job(spec, PersistStatus::Queued, ms);
     }
+
+    NANO_LOG(NOTICE, "job queued id=%d cmd=%s cpu=%d mem_mb=%zu pending=%zu", job.id, spec.cmd.c_str(), spec.cpu_cores, spec.memory_mb, pending_.size());
 
     lk.unlock();
     cv_.notify_all();
@@ -164,6 +176,9 @@ bool Scheduler::launch_job(Job &job) {
     std::string cg_path;
     if (opts_.cgroup.enabled) {
         cg_path = create_cgroup_for_job(job.id, job.spec.cpu_cores, job.spec.memory_mb, opts_.cgroup);
+        if (cg_path.empty()) {
+            NANO_LOG(WARNING, "create_cgroup failed for job id=%d", job.id);
+        }
     }
 
     pid_t pid = ::fork();
@@ -210,6 +225,7 @@ bool Scheduler::launch_job(Job &job) {
 
     running_[job.id] = job;
     metrics_.inc_running();
+    NANO_LOG(NOTICE, "job started id=%d pid=%d cmd=%s cpu=%d mem_mb=%zu cg=%s", job.id, job.pid, job.spec.cmd.c_str(), job.spec.cpu_cores, job.spec.memory_mb, job.cgroup_path.c_str());
     return true;
 }
 
@@ -220,6 +236,7 @@ void Scheduler::dispatcher_loop() {
         if (shutting_down_.load()) break;
         if (opts_.enable_psi_monitor && psi_backpressure_.load()) {
             metrics_.inc_pressure_blocked();
+            NANO_LOG(WARNING, "%s", "dispatcher blocked by PSI backpressure");
             lk.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
@@ -231,10 +248,12 @@ void Scheduler::dispatcher_loop() {
         auto now = std::chrono::steady_clock::now();
         auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - job.enqueue_time).count();
         metrics_.record_queue_wait(wait_ms);
+        NANO_LOG(DEBUG, "dispatching job id=%d cmd=%s queue_wait_ms=%lld cpu=%d mem_mb=%zu pending=%zu", job.id, job.spec.cmd.c_str(), static_cast<long long>(wait_ms), job.spec.cpu_cores, job.spec.memory_mb, pending_.size());
         if (!rm_.reserve(job.spec.cpu_cores, job.spec.memory_mb)) {
             // 资源不足，重新放回队列尾部
             pending_.push_back(job);
             metrics_.set_pending(static_cast<long long>(pending_.size()));
+            NANO_LOG(NOTICE, "resource busy requeue job id=%d pending=%zu", job.id, pending_.size());
             lk.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
@@ -263,8 +282,10 @@ void Scheduler::reaper_loop() {
                         kill(-job.pgid, SIGTERM);
                         job.sigterm_sent = true;
                         job.kill_deadline = now + std::chrono::seconds(opts_.kill_grace_sec);
+                        NANO_LOG(WARNING, "sent SIGTERM for timeout job id=%d pid=%d", job.id, job.pid);
                     } else if (job.kill_deadline && now >= *job.kill_deadline) {
                         kill(-job.pgid, SIGKILL);
+                        NANO_LOG(ERROR, "sent SIGKILL after grace job id=%d pid=%d", job.id, job.pid);
                     }
                 }
             }
@@ -296,6 +317,16 @@ void Scheduler::reaper_loop() {
                     auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(job.start_time.time_since_epoch()).count();
                     auto end_ms = std::chrono::duration_cast<std::chrono::milliseconds>(job.end_time.time_since_epoch()).count();
                     store_->update_status(job.id, ps, status, start_ms, end_ms);
+                }
+                auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(job.end_time - job.start_time).count();
+                if (job.status == JobStatus::Succeeded) {
+                    NANO_LOG(NOTICE, "job finished success id=%d pid=%d exit=%d duration_ms=%lld", job.id, job.pid, WEXITSTATUS(status), static_cast<long long>(dur_ms));
+                } else if (job.status == JobStatus::Timeout) {
+                    NANO_LOG(WARNING, "job timeout id=%d pid=%d duration_ms=%lld", job.id, job.pid, static_cast<long long>(dur_ms));
+                } else {
+                    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    int sig = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+                    NANO_LOG(ERROR, "job failed id=%d pid=%d exit=%d sig=%d duration_ms=%lld", job.id, job.pid, exit_code, sig, static_cast<long long>(dur_ms));
                 }
                 it = running_.erase(it);
             } else {
